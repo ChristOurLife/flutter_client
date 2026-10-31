@@ -119,17 +119,15 @@ jobs:
           IPA_PATH="$IPA_DIR/Fluxer-$FLAVOR.ipa"
 
           # Find the built .app (flutter build ios --no-codesign puts it here)
-          DERIVED_APP=$(find "$BUILD_DIR/DerivedData" -name "Runner.app" -path "*/$CONFIGURATION-iphoneos/*" 2>/dev/null | head -1)
+          # With flavors, the path includes the flavor: Release-canary-iphoneos, Release-beta-iphoneos, etc.
+          echo "Searching for Runner.app..."
+          APP_PATH=$(find . -name "Runner.app" -type d 2>/dev/null | grep -E "(Release|Debug).*iphoneos" | head -1)
 
-          if [ -n "$DERIVED_APP" ] && [ -d "$DERIVED_APP" ]; then
-            APP_PATH="$DERIVED_APP"
-            echo "Found .app at: $APP_PATH"
-          elif [ -d "build/ios/Release-iphoneos/Runner.app" ]; then
-            APP_PATH="build/ios/Release-iphoneos/Runner.app"
+          if [ -n "$APP_PATH" ] && [ -d "$APP_PATH" ]; then
             echo "Found .app at: $APP_PATH"
           else
-            echo "Searching for Runner.app..."
-            find . -name "Runner.app" -type d 2>/dev/null | head -5
+            echo "Searching all Runner.app locations..."
+            find . -name "Runner.app" -type d 2>/dev/null | head -10
             echo "::error::Could not find built Runner.app"
             exit 1
           fi
