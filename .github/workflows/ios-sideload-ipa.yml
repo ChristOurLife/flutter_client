@@ -38,17 +38,10 @@ jobs:
           xcodebuild -showsdks | grep -q 'iphoneos27.1'
 
       - name: Set up Flutter
-        uses: axi92/flutter-action@v1
+        uses: subosito/flutter-action@v2
         with:
           channel: stable
-
-      - name: Restore pub cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pub-
+          cache: true
 
       - name: Configure iOS build tree
         run: dart tool/configure_build.dart --profile=ios-store
