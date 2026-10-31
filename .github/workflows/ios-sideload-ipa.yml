@@ -1,0 +1,195 @@
+name: iOS Unsigned IPA Build (for TrollStore)
+
+on:
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: 'Build flavor (canary, beta, or stable)'
+        required: true
+        default: 'canary'
+        type: choice
+        options:
+          - canary
+          - beta
+          - stable
+
+jobs:
+  build-ipa:
+    name: Build Unsigned iOS IPA for TrollStore
+    runs-on: xcode-27
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      LANGUAGE: en_US.UTF-8
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Sync submodules
+        run: git submodule update --init --recursive
+
+      - name: Verify Xcode 27.1 toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -showsdks | grep -q 'iphoneos27.1'
+
+      - name: Set up Flutter
+        uses: axi92/flutter-action@v1
+        with:
+          channel: stable
+
+      - name: Restore pub cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Configure iOS build tree
+        run: dart tool/configure_build.dart --profile=ios-store
+
+      - name: Set up Rust and native asset build hooks
+        run: |
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain stable
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            . "$HOME/.cargo/env"
+          fi
+          rustup target add aarch64-apple-ios
+          flutter config --enable-native-assets
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run build_runner
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Determine build configuration
+        id: config
+        run: |
+          case "${{ github.event.inputs.flavor }}" in
+            canary)
+              echo "configuration=Release-canary" >> "$GITHUB_OUTPUT"
+              echo "scheme=canary" >> "$GITHUB_OUTPUT"
+              echo "bundle_id=com.fluxer.canary" >> "$GITHUB_OUTPUT"
+              echo "dart_defines=tool/dart_defines/canary.json" >> "$GITHUB_OUTPUT"
+              ;;
+            beta)
+              echo "configuration=Release-beta" >> "$GITHUB_OUTPUT"
+              echo "scheme=beta" >> "$GITHUB_OUTPUT"
+              echo "bundle_id=com.fluxer" >> "$GITHUB_OUTPUT"
+              echo "dart_defines=tool/dart_defines/beta.json" >> "$GITHUB_OUTPUT"
+              ;;
+            stable)
+              echo "configuration=Release-stable" >> "$GITHUB_OUTPUT"
+              echo "scheme=stable" >> "$GITHUB_OUTPUT"
+              echo "bundle_id=com.fluxer" >> "$GITHUB_OUTPUT"
+              echo "dart_defines=tool/dart_defines/stable.json" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Get Flutter version
+        id: flutter_version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build Flutter iOS (no codesign)
+        run: |
+          flutter build ios \
+            --release \
+            --flavor ${{ github.event.inputs.flavor }} \
+            --no-codesign \
+            --build-name ${{ steps.flutter_version.outputs.version }} \
+            --build-number 1 \
+            --dart-define-from-file=${{ steps.config.outputs.dart_defines }} \
+            --dart-define=PUSH_PROVIDER=apns \
+            --dart-define=BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+      - name: Package unsigned .app as IPA
+        run: |
+          set -euo pipefail
+
+          FLAVOR="${{ github.event.inputs.flavor }}"
+          CONFIGURATION="${{ steps.config.outputs.configuration }}"
+          SCHEME="${{ steps.config.outputs.scheme }}"
+
+          BUILD_DIR="build/ios/iphoneos"
+          APP_PATH="$BUILD_DIR/Runner.app"
+          IPA_DIR="$BUILD_DIR/ipa"
+          IPA_PATH="$IPA_DIR/Fluxer-$FLAVOR.ipa"
+
+          # Find the built .app (flutter build ios --no-codesign puts it here)
+          # The actual path might be in the derived data
+          DERIVED_APP=$(find "$BUILD_DIR/DerivedData" -name "Runner.app" -path "*/$CONFIGURATION-iphoneos/*" 2>/dev/null | head -1)
+
+          if [ -n "$DERIVED_APP" ] && [ -d "$DERIVED_APP" ]; then
+            APP_PATH="$DERIVED_APP"
+            echo "Found .app at: $APP_PATH"
+          elif [ -d "build/ios/Release-iphoneos/Runner.app" ]; then
+            APP_PATH="build/ios/Release-iphoneos/Runner.app"
+            echo "Found .app at: $APP_PATH"
+          else
+            echo "Searching for Runner.app..."
+            find . -name "Runner.app" -type d 2>/dev/null | head -5
+            echo "::error::Could not find built Runner.app"
+            exit 1
+          fi
+
+          # Verify it's a valid .app bundle
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "::error::Invalid .app bundle at $APP_PATH"
+            exit 1
+          fi
+
+          # Create IPA structure
+          mkdir -p "$IPA_DIR/Payload"
+          cp -R "$APP_PATH" "$IPA_DIR/Payload/"
+
+          # Create minimal iTunesMetadata.plist (optional but good for compatibility)
+          cat > "$IPA_DIR/iTunesMetadata.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>itemName</key>
+    <string>Fluxer</string>
+    <key>softwareVersionBundleId</key>
+    <string>${{ steps.config.outputs.bundle_id }}</string>
+    <key>bundleShortVersionString</key>
+    <string>${{ steps.flutter_version.outputs.version }}</string>
+    <key>versionNumber</key>
+    <string>1</string>
+</dict>
+</plist>
+EOF
+
+          # Package as IPA (just a zip with .ipa extension)
+          cd "$IPA_DIR"
+          zip -r -q "Fluxer-$FLAVOR.ipa" Payload iTunesMetadata.plist
+          cd - > /dev/null
+
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+          echo "::notice::Unsigned IPA built at $IPA_PATH"
+          echo "::notice::Size: $(du -h "$IPA_PATH" | cut -f1)"
+
+      - name: Upload IPA as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxer-ios-${{ github.event.inputs.flavor }}-unsigned
+          path: ${{ env.IPA_PATH }}
+          retention-days: 30
+
+      - name: Show IPA info
+        run: |
+          ls -la ${{ env.IPA_PATH }}
+          echo ""
+          echo "✅ Unsigned IPA ready for TrollStore!"
+          echo "📥 Download from workflow artifacts"
+          echo "📱 Install via TrollStore (no signing needed)"
