@@ -126,7 +126,6 @@ jobs:
           IPA_PATH="$IPA_DIR/Fluxer-$FLAVOR.ipa"
 
           # Find the built .app (flutter build ios --no-codesign puts it here)
-          # The actual path might be in the derived data
           DERIVED_APP=$(find "$BUILD_DIR/DerivedData" -name "Runner.app" -path "*/$CONFIGURATION-iphoneos/*" 2>/dev/null | head -1)
 
           if [ -n "$DERIVED_APP" ] && [ -d "$DERIVED_APP" ]; then
@@ -153,22 +152,22 @@ jobs:
           cp -R "$APP_PATH" "$IPA_DIR/Payload/"
 
           # Create minimal iTunesMetadata.plist (optional but good for compatibility)
-          cat > "$IPA_DIR/iTunesMetadata.plist" <<'HEREDOC'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>itemName</key>
-    <string>Fluxer</string>
-    <key>softwareVersionBundleId</key>
-    <string>${{ steps.config.outputs.bundle_id }}</string>
-    <key>bundleShortVersionString</key>
-    <string>${{ steps.flutter_version.outputs.version }}</string>
-    <key>versionNumber</key>
-    <string>1</string>
-</dict>
-</plist>
-HEREDOC
+          cat << 'HEREDOC' > "$IPA_DIR/iTunesMetadata.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>itemName</key>
+              <string>Fluxer</string>
+              <key>softwareVersionBundleId</key>
+              <string>${{ steps.config.outputs.bundle_id }}</string>
+              <key>bundleShortVersionString</key>
+              <string>${{ steps.flutter_version.outputs.version }}</string>
+              <key>versionNumber</key>
+              <string>1</string>
+          </dict>
+          </plist>
+          HEREDOC
 
           # Package as IPA (just a zip with .ipa extension)
           cd "$IPA_DIR"
@@ -193,4 +192,3 @@ HEREDOC
           echo "✅ Unsigned IPA ready for TrollStore!"
           echo "📥 Download from workflow artifacts"
           echo "📱 Install via TrollStore (no signing needed)"
-# amogus
