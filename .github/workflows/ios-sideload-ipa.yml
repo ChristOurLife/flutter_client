@@ -153,7 +153,7 @@ jobs:
           cp -R "$APP_PATH" "$IPA_DIR/Payload/"
 
           # Create minimal iTunesMetadata.plist (optional but good for compatibility)
-          cat > "$IPA_DIR/iTunesMetadata.plist" <<'EOF'
+          cat > "$IPA_DIR/iTunesMetadata.plist" <<'HEREDOC'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -168,7 +168,7 @@ jobs:
     <string>1</string>
 </dict>
 </plist>
-EOF
+HEREDOC
 
           # Package as IPA (just a zip with .ipa extension)
           cd "$IPA_DIR"
